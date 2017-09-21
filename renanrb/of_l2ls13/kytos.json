@@ -1,0 +1,11 @@
+{
+  "author": "renanrb",
+  "username": "renanrb",
+  "name": "of_l2ls13",
+  "description": "l2 learning switch using python-openflow version 1.3",
+  "version": "beta-experimental",
+  "napp_dependencies": ["kytos/of_core"],
+  "license": "",
+  "tags": [],
+  "url": ""
+}
