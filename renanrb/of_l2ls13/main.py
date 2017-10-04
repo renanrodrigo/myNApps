@@ -5,17 +5,11 @@ from kytos.core.helpers import listen_to
 from pyof.foundation.network_types import Ethernet
 from pyof.v0x04.asynchronous.packet_in import PacketInReason
 from pyof.v0x04.controller2switch.flow_mod import FlowMod, FlowModCommand
-from pyof.v0x04.controller2switch.group_mod import Group
 from pyof.v0x04.controller2switch.packet_out import PacketOut
-from pyof.v0x04.common.constants import OFP_NO_BUFFER
 from pyof.v0x04.common.port import PortNo
-from pyof.v0x04.common.flow_instructions import (InstructionApplyAction,
-                                                 ListOfInstruction)
-from pyof.v0x04.common.action import (ActionOutput, ActionType,
-                                      ControllerMaxLen, ListOfActions)
-from pyof.v0x04.common.flow_match import (Match, MatchType, OxmClass,
-                                          OxmMatchFields, OxmOfbMatchField,
-                                          OxmTLV)
+from pyof.v0x04.common.flow_instructions import InstructionApplyAction
+from pyof.v0x04.common.action import ActionOutput
+from pyof.v0x04.common.flow_match import OxmOfbMatchField, OxmTLV
 
 from napps.renanrb.of_l2ls13 import settings
 
@@ -42,31 +36,13 @@ class Main(KytosNApp):
     @listen_to('kytos/core.switches.new')
     def install_table_miss_flow(self, event):
         flow_mod = FlowMod()
-        flow_mod.cookie = 0
-        flow_mod.cookie_mask = 0
-        flow_mod.table_id = 0
         flow_mod.command = FlowModCommand.OFPFC_ADD
-        flow_mod.idle_timeout = 0
-        flow_mod.hard_timeout = 0
-        flow_mod.priority = 0
-        flow_mod.buffer_id = OFP_NO_BUFFER
-        flow_mod.out_port = PortNo.OFPP_ANY
-        flow_mod.out_group = Group.OFPG_ANY
-        flow_mod.flags = 0
 
-        flow_mod.match = Match()
-        flow_mod.match.match_type = MatchType.OFPMT_OXM
-        flow_mod.match.oxm_match_fields = OxmMatchFields()
+        action = ActionOutput(port=PortNo.OFPP_CONTROLLER)
 
-        action = ActionOutput()
-        action.max_length = ControllerMaxLen.OFPCML_NO_BUFFER
-        action.port = PortNo.OFPP_CONTROLLER
+        instruction = InstructionApplyAction()
+        instruction.actions.append(action)
 
-        actions = ListOfActions()
-        actions.append(action)
-        instruction = InstructionApplyAction(actions=actions)
-
-        flow_mod.instructions = ListOfInstruction()
         flow_mod.instructions.append(instruction)
 
         destination = event.content['switch'].connection
@@ -86,7 +62,6 @@ class Main(KytosNApp):
             event (KytosPacketIn): Received Event
         """
         log.debug("PacketIn Received")
-        log.info("PacketIn Received")
 
         packet_in = event.content['message']
 
@@ -99,9 +74,7 @@ class Main(KytosNApp):
             return
 
         # Learn the port where the sender is connected
-        for tlv in packet_in.match.oxm_match_fields:
-            if tlv.oxm_field == OxmOfbMatchField.OFPXMT_OFB_IN_PORT:
-                in_port = int.from_bytes(tlv.oxm_value, 'big')
+        in_port = packet_in.in_port
 
         switch = event.source.switch
         switch.update_mac_table(ethernet.source, in_port)
@@ -111,49 +84,29 @@ class Main(KytosNApp):
         # Add a flow to the switch if the destination is known
         if ports:
             flow_mod = FlowMod()
-            flow_mod.cookie = 0
-            flow_mod.cookie_mask = 0
-            flow_mod.table_id = 0
             flow_mod.command = FlowModCommand.OFPFC_ADD
-            flow_mod.idle_timeout = 0
-            flow_mod.hard_timeout = 0
             flow_mod.priority = settings.flow_priority
-            flow_mod.buffer_id = OFP_NO_BUFFER
-            flow_mod.out_port = PortNo.OFPP_ANY
-            flow_mod.out_group = Group.OFPG_ANY
-            flow_mod.flags = 0
 
-            flow_mod.match = Match()
-            flow_mod.match.match_type = MatchType.OFPMT_OXM
-            flow_mod.match.oxm_match_fields = OxmMatchFields()
+            match_dl_type = OxmTLV()
+            match_dl_type.oxm_field = OxmOfbMatchField.OFPXMT_OFB_ETH_TYPE
+            match_dl_type.oxm_value = ethernet.ether_type.value.to_bytes(2,'big')
+            flow_mod.match.oxm_match_fields.append(match_dl_type)
 
             match_dl_src = OxmTLV()
-            match_dl_src.oxm_class = OxmClass.OFPXMC_OPENFLOW_BASIC
             match_dl_src.oxm_field = OxmOfbMatchField.OFPXMT_OFB_ETH_SRC
             match_dl_src.oxm_value = ethernet.source.pack()
             flow_mod.match.oxm_match_fields.append(match_dl_src)
 
             match_dl_dst = OxmTLV()
-            match_dl_dst.oxm_class = OxmClass.OFPXMC_OPENFLOW_BASIC
             match_dl_dst.oxm_field = OxmOfbMatchField.OFPXMT_OFB_ETH_DST
             match_dl_dst.oxm_value = ethernet.destination.pack()
             flow_mod.match.oxm_match_fields.append(match_dl_dst)
 
-            match_dl_type = OxmTLV()
-            match_dl_type.oxm_class = OxmClass.OFPXMC_OPENFLOW_BASIC
-            match_dl_type.oxm_field = OxmOfbMatchField.OFPXMT_OFB_ETH_TYPE
-            match_dl_type.oxm_value = ethernet.ether_type.value.to_bytes(2,'big')
-            flow_mod.match.oxm_match_fields.append(match_dl_type)
+            action = ActionOutput(port=ports[0])
 
-            action = ActionOutput()
-            action.max_length = ControllerMaxLen.OFPCML_NO_BUFFER
-            action.port = ports[0]
+            instruction = InstructionApplyAction()
+            instruction.actions.append(action)
 
-            actions = ListOfActions()
-            actions.append(action)
-            instruction = InstructionApplyAction(actions=actions)
-
-            flow_mod.instructions = ListOfInstruction()
             flow_mod.instructions.append(instruction)
 
             event_out = KytosEvent(name=('kytos/of_l2ls.messages.out.'
@@ -170,13 +123,8 @@ class Main(KytosNApp):
 
         port = ports[0] if ports else PortNo.OFPP_FLOOD
 
-        out_action = ActionOutput()
-        out_action.action_type = ActionType.OFPAT_OUTPUT
-        out_action.length = 16
-        out_action.max_length = ControllerMaxLen.OFPCML_NO_BUFFER
-        out_action.port = port
+        out_action = ActionOutput(port=port)
 
-        packet_out.actions = ListOfActions()
         packet_out.actions.append(out_action)
         event_out = KytosEvent(name=('kytos/of_l2ls.messages.out.'
                                      'ofpt_packet_out'),
