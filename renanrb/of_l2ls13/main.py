@@ -33,7 +33,7 @@ class Main(KytosNApp):
         """
         pass
 
-    @listen_to('kytos/core.switches.new')
+    @listen_to('kytos/core.switch.new')
     def install_table_miss_flow(self, event):
         flow_mod = FlowMod()
         flow_mod.command = FlowModCommand.OFPFC_ADD
